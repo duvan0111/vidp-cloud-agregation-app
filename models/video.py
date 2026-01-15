@@ -24,7 +24,8 @@ class VideoMetadata(BaseModel):
     Video metadata model for DynamoDB storage.
     
     Attributes:
-        id: Unique identifier (UUID string).
+        videoId: Primary key in DynamoDB (UUID string).
+        id: Alias for videoId for backward compatibility.
         source_video_id: ID from the main vidp-fastapi-service (for cross-database reference).
         filename: Original name of the uploaded file.
         file_path: Storage path (S3 key or local path).
@@ -33,7 +34,8 @@ class VideoMetadata(BaseModel):
         status: Current processing status.
         created_at: Timestamp of creation.
     """
-    id: Optional[str] = Field(default=None, description="Unique video ID (UUID)")
+    videoId: Optional[str] = Field(default=None, description="Unique video ID (UUID) - Primary Key")
+    id: Optional[str] = Field(default=None, description="Alias for videoId")
     
     # Reference to the original video in vidp-fastapi-service database
     source_video_id: Optional[str] = Field(None, description="Video ID from the main service (vidp-fastapi-service)")
@@ -58,6 +60,7 @@ class VideoMetadata(BaseModel):
         populate_by_name=True,
         json_schema_extra={
             "example": {
+                "videoId": "550e8400-e29b-41d4-a716-446655440000",
                 "id": "550e8400-e29b-41d4-a716-446655440000",
                 "source_video_id": "550e8400-e29b-41d4-a716-446655440001",
                 "filename": "sample_video.mp4",
@@ -79,6 +82,13 @@ class VideoMetadata(BaseModel):
         if isinstance(v, str):
             return datetime.fromisoformat(v)
         return v
+    
+    def model_post_init(self, __context):
+        """Ensure videoId and id are synchronized."""
+        if self.videoId and not self.id:
+            self.id = self.videoId
+        elif self.id and not self.videoId:
+            self.videoId = self.id
 
 
 class VideoCreateRequest(BaseModel):

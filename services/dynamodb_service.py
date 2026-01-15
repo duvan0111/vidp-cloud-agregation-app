@@ -90,10 +90,10 @@ class DynamoDBService:
         await dynamodb.create_table(
             TableName=settings.DYNAMODB_TABLE_NAME,
             KeySchema=[
-                {"AttributeName": "id", "KeyType": "HASH"}
+                {"AttributeName": "videoId", "KeyType": "HASH"}
             ],
             AttributeDefinitions=[
-                {"AttributeName": "id", "AttributeType": "S"},
+                {"AttributeName": "videoId", "AttributeType": "S"},
                 {"AttributeName": "status", "AttributeType": "S"},
                 {"AttributeName": "source_video_id", "AttributeType": "S"},
                 {"AttributeName": "filename", "AttributeType": "S"},
@@ -213,7 +213,8 @@ class DynamoDBService:
             
             # Build item
             item = video_data.model_dump()
-            item["id"] = video_id
+            item["videoId"] = video_id  # Use videoId as primary key
+            item["id"] = video_id  # Keep id for backward compatibility
             item["created_at"] = now.isoformat()
             item["updated_at"] = now.isoformat()
             
@@ -296,7 +297,7 @@ class DynamoDBService:
                 table = await dynamodb.Table(settings.DYNAMODB_TABLE_NAME)
                 
                 response = await table.update_item(
-                    Key={"id": video_id},
+                    Key={"videoId": video_id},
                     UpdateExpression=update_expression,
                     ExpressionAttributeNames=expression_attribute_names,
                     ExpressionAttributeValues=expression_attribute_values,
@@ -334,7 +335,7 @@ class DynamoDBService:
             
             async with session.resource("dynamodb", **client_kwargs) as dynamodb:
                 table = await dynamodb.Table(settings.DYNAMODB_TABLE_NAME)
-                response = await table.get_item(Key={"id": video_id})
+                response = await table.get_item(Key={"videoId": video_id})
             
             if "Item" in response:
                 item = cls._deserialize_item(response["Item"])
@@ -488,7 +489,7 @@ class DynamoDBService:
                 
                 # Check if item exists first
                 response = await table.delete_item(
-                    Key={"id": video_id},
+                    Key={"videoId": video_id},
                     ReturnValues="ALL_OLD"
                 )
             
