@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Video Storage - DO NOT COMMIT LARGE VIDEO FILES
+video_storage/*.mp4
+video_storage/*.avi
+video_storage/*.mov
+video_storage/*.mkv
+
+# Temporary files
+temp/
+temp_aggregator/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+test_videos/
+test_output/
