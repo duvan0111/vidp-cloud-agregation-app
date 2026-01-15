@@ -4,7 +4,7 @@
 Main FastAPI application entry point.
 
 Initializes the FastAPI app, configures middleware, and sets up
-database connections and routing.
+AWS services (S3 and DynamoDB) connections and routing.
 """
 
 import logging
@@ -12,11 +12,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
 from api.routes import router
-from services.mongodb_service import MongoDBService
+from services.dynamodb_service import DynamoDBService
+from services.s3_service import S3Service
 
 # Configure logging
 logging.basicConfig(
@@ -39,28 +39,36 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Video Aggregation Service...")
     
-    # Connect to MongoDB
+    # Initialize S3
     try:
-        await MongoDBService.connect()
-        logger.info("MongoDB connection established")
+        await S3Service.initialize()
+        logger.info(f"S3 connection established - Bucket: {settings.S3_BUCKET_NAME}")
     except Exception as e:
-        logger.error(f"Failed to connect to MongoDB: {e}")
+        logger.error(f"Failed to initialize S3: {e}")
         raise
     
-    # Ensure storage directories exist
-    settings.VIDEO_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    # Connect to DynamoDB
+    try:
+        await DynamoDBService.connect()
+        logger.info(f"DynamoDB connection established - Table: {settings.DYNAMODB_TABLE_NAME}")
+    except Exception as e:
+        logger.error(f"Failed to connect to DynamoDB: {e}")
+        raise
+    
+    # Ensure temp directory exists (for local processing)
     settings.TEMP_DIR.mkdir(parents=True, exist_ok=True)
     
-    logger.info(f"Video storage directory: {settings.VIDEO_STORAGE_DIR}")
     logger.info(f"Temporary directory: {settings.TEMP_DIR}")
+    logger.info(f"S3 Bucket: {settings.S3_BUCKET_NAME}")
+    logger.info(f"AWS Region: {settings.AWS_REGION}")
     logger.info(f"Server starting on {settings.HOST}:{settings.PORT}")
     
     yield
     
     # Shutdown
     logger.info("Shutting down Video Aggregation Service...")
-    await MongoDBService.disconnect()
-    logger.info("MongoDB connection closed")
+    await DynamoDBService.disconnect()
+    logger.info("AWS services disconnected")
 
 
 # Initialize FastAPI application
@@ -80,13 +88,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files for video storage (for direct access)
-app.mount(
-    "/video_storage",
-    StaticFiles(directory=str(settings.VIDEO_STORAGE_DIR)),
-    name="video_storage"
-)
-
 # Include API routes
 app.include_router(router)
 
@@ -99,7 +100,16 @@ async def root():
         "version": settings.API_VERSION,
         "description": settings.API_DESCRIPTION,
         "docs": "/docs",
-        "health": "/api/health"
+        "health": "/api/health",
+        "storage": {
+            "type": "Amazon S3",
+            "bucket": settings.S3_BUCKET_NAME,
+            "region": settings.AWS_REGION
+        },
+        "database": {
+            "type": "Amazon DynamoDB",
+            "table": settings.DYNAMODB_TABLE_NAME
+        }
     }
 
 

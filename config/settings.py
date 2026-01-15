@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     HOST: str = Field(default="127.0.0.1", description="Server host address")
     PORT: int = Field(default=8005, ge=1, le=65535, description="Server port")
     
-    # NEW: Added API_URL to fix the AttributeError
     API_URL: Optional[str] = Field(
         default=None, 
         description="Public base URL of the service (used for links)"
@@ -41,19 +40,43 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(default=False, description="Enable debug mode")
     WORKERS: int = Field(default=1, ge=1, description="Number of worker processes")
     
-    # ========== MongoDB Configuration ==========
+    # ========== AWS Configuration ==========
+    AWS_ACCESS_KEY_ID: Optional[str] = Field(
+        default=None,
+        description="AWS Access Key ID (optional if using IAM roles)"
+    )
+    AWS_SECRET_ACCESS_KEY: Optional[str] = Field(
+        default=None,
+        description="AWS Secret Access Key (optional if using IAM roles)"
+    )
+    AWS_REGION: str = Field(
+        default="us-east-1",
+        description="AWS Region"
+    )
     
-    MONGODB_URL: str = Field(
-        default="mongodb://localhost:27017",
-        description="MongoDB connection URL"
+    # ========== S3 Configuration ==========
+    S3_BUCKET_NAME: str = Field(
+        default="vidp-video-storage",
+        description="S3 bucket name for video storage"
     )
-    MONGODB_DATABASE: str = Field(
-        default="video_aggregation",
-        description="MongoDB database name"
+    S3_PREFIX: str = Field(
+        default="videos/",
+        description="S3 key prefix for video files"
     )
-    MONGODB_COLLECTION: str = Field(
-        default="videos",
-        description="MongoDB collection for video metadata"
+    S3_PRESIGNED_URL_EXPIRATION: int = Field(
+        default=3600,
+        ge=60,
+        description="Presigned URL expiration time in seconds"
+    )
+    
+    # ========== DynamoDB Configuration ==========
+    DYNAMODB_TABLE_NAME: str = Field(
+        default="vidp_videos",
+        description="DynamoDB table name for video metadata"
+    )
+    DYNAMODB_ENDPOINT_URL: Optional[str] = Field(
+        default=None,
+        description="DynamoDB endpoint URL (for local development with DynamoDB Local)"
     )
     
     # ========== External Service URLs ==========
@@ -94,7 +117,7 @@ class Settings(BaseSettings):
     )
     VIDEO_STORAGE_DIR: Optional[Path] = Field(
         default=None,
-        description="Permanent video storage directory"
+        description="Local video storage directory (fallback/cache)"
     )
     MAX_UPLOAD_SIZE: int = Field(
         default=500 * 1024 * 1024,  # 500MB
@@ -157,13 +180,10 @@ class Settings(BaseSettings):
     def set_api_url_default(self):
         """
         Automatically set API_URL based on HOST and PORT if not provided.
-        This ensures links work even if you change the port in .env.
         """
         if not self.API_URL:
-            # Default to http://HOST:PORT
             self.API_URL = f"http://{self.HOST}:{self.PORT}"
         
-        # Strip trailing slash if present to avoid double slashes in URLs
         if self.API_URL.endswith('/'):
             self.API_URL = self.API_URL[:-1]
             
@@ -174,7 +194,6 @@ class Settings(BaseSettings):
     def set_temp_dir(cls, v, info):
         """Set and create temporary directory if not specified."""
         if v is None:
-            # Handle case where BASE_DIR might be in info.data or not yet resolved
             base_dir = info.data.get("BASE_DIR", Path(__file__).resolve().parent.parent)
             v = base_dir / "temp_aggregator"
         

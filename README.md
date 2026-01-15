@@ -2,10 +2,11 @@
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688.svg?style=flat&logo=FastAPI&logoColor=white)](https://fastapi.tiangolo.com)
 [![Python](https://img.shields.io/badge/Python-3.8+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org)
-[![MongoDB](https://img.shields.io/badge/MongoDB-4.4+-47A248.svg?style=flat&logo=mongodb&logoColor=white)](https://www.mongodb.com)
+[![DynamoDB](https://img.shields.io/badge/DynamoDB-AWS-4053D6.svg?style=flat&logo=amazon-dynamodb&logoColor=white)](https://aws.amazon.com/dynamodb/)
+[![S3](https://img.shields.io/badge/S3-AWS-569A31.svg?style=flat&logo=amazon-s3&logoColor=white)](https://aws.amazon.com/s3/)
 [![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900.svg?style=flat&logo=amazon-aws&logoColor=white)](https://aws.amazon.com)
 
-Microservice d'agrégation vidéo qui **combine vidéos compressées et sous-titres générés** pour produire une vidéo finale avec sous-titres incrustés (burned-in). Conçu pour un déploiement sur **AWS Cloud**.
+Microservice d'agrégation vidéo qui **combine vidéos compressées et sous-titres générés** pour produire une vidéo finale avec sous-titres incrustés (burned-in). Utilise **Amazon S3** pour le stockage et **Amazon DynamoDB** pour les métadonnées.
 
 ---
 
@@ -14,6 +15,7 @@ Microservice d'agrégation vidéo qui **combine vidéos compressées et sous-tit
 - [Vue d'ensemble](#-vue-densemble)
 - [Architecture](#-architecture)
 - [Fonctionnalités](#-fonctionnalités)
+- [Services AWS](#-services-aws)
 - [Prérequis](#-prérequis)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
@@ -35,10 +37,10 @@ Le **Video Aggregation Service** est le **microservice final** du pipeline de tr
 1. **Reçoit** une vidéo uploadée
 2. **Télécharge** les sous-titres SRT depuis le microservice de génération
 3. **Incruste** les sous-titres dans la vidéo (burning) via FFmpeg
-4. **Compresse** la vidéo (optionnel) selon la résolution cible
-5. **Stocke** la vidéo finale de manière permanente
-6. **Enregistre** les métadonnées dans MongoDB
-7. **Fournit** une URL de streaming pour la vidéo
+4. **Compresse** la vidéo selon la résolution cible
+5. **Stocke** la vidéo finale sur **Amazon S3**
+6. **Enregistre** les métadonnées dans **Amazon DynamoDB**
+7. **Fournit** une URL presignée S3 pour le streaming
 
 ### Position dans l'architecture globale
 
@@ -63,13 +65,13 @@ Le **Video Aggregation Service** est le **microservice final** du pipeline de tr
         │
         └──> 5. app_agregation ⭐ (CE SERVICE)
                   │
-                  ├──> Télécharge SRT depuis app_subtitle
+                  ├──> Reçoit vidéo + SRT
                   ├──> Incruste sous-titres (FFmpeg)
-                  ├──> Stocke vidéo finale
-                  ├──> Sauvegarde métadonnées (MongoDB)
-                  └──> Fournit URL de streaming
+                  ├──> Upload vers Amazon S3
+                  ├──> Sauvegarde métadonnées (DynamoDB)
+                  └──> Fournit URL presignée S3
                         │
-                        └──> Client accède à la vidéo finale
+                        └──> Client streame la vidéo finale
 ```
 
 ---
@@ -94,7 +96,8 @@ app_agregation/
 │
 ├── services/
 │   ├── ffmpeg_service.py       # Service de traitement FFmpeg
-│   └── mongodb_service.py      # Service de persistance MongoDB
+│   ├── s3_service.py           # Service Amazon S3
+│   └── dynamodb_service.py     # Service Amazon DynamoDB
 │
 ├── utils/
 │   ├── exceptions.py           # Gestion d'erreurs
@@ -109,11 +112,11 @@ app_agregation/
 
 - **FastAPI** - Framework web asynchrone haute performance
 - **FFmpeg** - Traitement vidéo (burning de sous-titres, compression)
-- **MongoDB** - Stockage des métadonnées vidéo
+- **Amazon S3** - Stockage permanent des vidéos
+- **Amazon DynamoDB** - Stockage des métadonnées vidéo
 - **Uvicorn** - Serveur ASGI
 - **Pydantic** - Validation des données
 - **HTTPX** - Client HTTP asynchrone (téléchargement SRT)
-- **AWS S3** - Stockage permanent des vidéos (en production)
 - **AWS ECS/EKS** - Orchestration des conteneurs
 - **AWS CloudWatch** - Monitoring et logs
 
@@ -126,9 +129,9 @@ app_agregation/
 - 🎥 **Agrégation vidéo/sous-titres** : Combine vidéo et SRT en une vidéo finale
 - 🔥 **Burning de sous-titres** : Incruste les sous-titres directement dans la vidéo
 - 📦 **Compression vidéo** : Réduit la taille selon la résolution cible (360p à 1080p)
-- 💾 **Stockage permanent** : Sauvegarde sur système de fichiers local ou AWS S3
-- 📊 **Métadonnées MongoDB** : Enregistre durée, taille, résolution, statut
-- 📡 **Streaming HTTP** : Fournit des URLs de streaming pour lecture directe
+- 💾 **Stockage S3** : Sauvegarde sur Amazon S3
+- 📊 **Métadonnées DynamoDB** : Enregistre durée, taille, résolution, statut
+- 📡 **Streaming HTTP** : Fournit des URLs presignées pour lecture directe
 - 🔄 **Traitement asynchrone** : Traite les vidéos en arrière-plan
 - 🧹 **Nettoyage automatique** : Supprime les fichiers temporaires
 
@@ -152,13 +155,32 @@ app_agregation/
 
 ---
 
+## 🛠 Services AWS
+
+### Amazon S3 (Simple Storage Service)
+
+- **Stockage des vidéos** : Les vidéos traitées sont stockées dans un bucket S3
+- **URLs Presignées** : Génération d'URLs temporaires sécurisées pour le streaming
+- **Streaming natif** : Support des requêtes Range pour le streaming vidéo
+
+### Amazon DynamoDB
+
+- **Base de données NoSQL** : Stockage des métadonnées vidéo
+- **Indexes secondaires globaux (GSI)** :
+  - `status-created_at-index` : Recherche par statut
+  - `source_video_id-index` : Liaison avec le service principal
+  - `filename-index` : Recherche par nom de fichier
+- **Scalabilité automatique** : Pas de gestion de serveur
+
+---
+
 ## 📦 Prérequis
 
 ### Système
 
 - **Python** 3.8 ou supérieur
 - **FFmpeg** 4.0+ - [Télécharger FFmpeg](https://www.ffmpeg.org/download.html)
-- **MongoDB** 4.4+ (local ou Atlas)
+- **AWS CLI** configuré avec les credentials
 
 ### Installation de FFmpeg
 
@@ -185,7 +207,8 @@ ffmpeg -version
 ### Services externes requis
 
 - **app_subtitle** : Microservice de génération de sous-titres
-- **MongoDB** : Base de données pour les métadonnées
+- **Amazon S3** : Stockage des vidéos
+- **Amazon DynamoDB** : Base de données pour les métadonnées
 
 ---
 
@@ -254,20 +277,18 @@ WORKERS=1
 API_URL=http://localhost:8000
 
 # ============================================================================
-# MongoDB Configuration
+# Amazon S3 Configuration
 # ============================================================================
-MONGODB_URL=mongodb://localhost:27017
-MONGODB_DATABASE=vidp_cloud_db
-MONGODB_COLLECTION=videos
+AWS_REGION=us-east-1
+AWS_S3_BUCKET=vidp-video-storage
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+S3_PRESIGNED_URL_EXPIRATION=3600
 
 # ============================================================================
-# External Service URLs
+# Amazon DynamoDB Configuration
 # ============================================================================
-# URL du microservice de génération de sous-titres
-SUBTITLE_SERVICE_URL=http://app-subtitle:8002/api/generate-subtitles/
-
-# URL du microservice de compression (optionnel)
-COMPRESSION_SERVICE_URL=http://app-downscale:8001/api/compress/upload
+DYNAMODB_TABLE_NAME=vidp_videos
 
 # ============================================================================
 # Timeout Configuration (seconds)
@@ -328,6 +349,9 @@ AWS_SECRET_ACCESS_KEY=your_secret_key
 # Utiliser S3 au lieu du système de fichiers local
 USE_S3_STORAGE=true
 
+# AWS DynamoDB Configuration
+DYNAMODB_TABLE_NAME=vidp_videos
+
 # CloudWatch Logs
 AWS_CLOUDWATCH_LOG_GROUP=/aws/ecs/vidp-aggregation
 ```
@@ -386,7 +410,7 @@ curl -X POST "http://localhost:8005/api/process-video/" \
   "video_id": "65f1234567890abcdef12345",
   "job_id": "job_a1b2c3d4",
   "message": "Video processed and stored successfully",
-  "streaming_url": "http://localhost:8005/api/video_storage/job_a1b2c3d4_final.mp4",
+  "streaming_url": "https://vidp-video-storage.s3.amazonaws.com/job_a1b2c3d4_final.mp4?...",
   "metadata": {
     "original_filename": "my_video.mp4",
     "final_filename": "job_a1b2c3d4_final.mp4",
@@ -415,8 +439,8 @@ curl http://localhost:8000/api/videos/65f1234567890abcdef12345
 {
   "id": "65f1234567890abcdef12345",
   "filename": "my_video.mp4",
-  "file_path": "/app/video_storage/job_a1b2c3d4_final.mp4",
-  "link": "http://localhost:8000/api/video_storage/job_a1b2c3d4_final.mp4",
+  "s3_uri": "s3://vidp-video-storage/job_a1b2c3d4_final.mp4",
+  "link": "https://vidp-video-storage.s3.amazonaws.com/job_a1b2c3d4_final.mp4?...",
   "status": "saved",
   "file_size": 15728640,
   "duration": 125.5,
@@ -509,9 +533,9 @@ Vérifie l'état de santé du service.
   "status": "healthy",
   "service": "Video Aggregation Service",
   "version": "2.0.0",
-  "mongodb": "connected",
-  "ffmpeg": "available",
-  "storage": "writable"
+  "s3": "connected",
+  "dynamodb": "connected",
+  "ffmpeg": "available"
 }
 ```
 
@@ -545,8 +569,8 @@ Internet Gateway
       │         ├──> /videos/
       │         └──> /temp/
       │
-      ├──> Amazon DocumentDB / MongoDB Atlas
-      │         └──> Collections: videos
+      ├──> Amazon DynamoDB
+      │         └──> Table: vidp_videos
       │
       ├──> Amazon CloudWatch
       │         ├──> Logs
@@ -645,8 +669,8 @@ docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/vidp-aggregation:latest
       ],
       "secrets": [
         {
-          "name": "MONGODB_URL",
-          "valueFrom": "arn:aws:secretsmanager:us-east-1:<account-id>:secret:vidp/mongodb-url"
+          "name": "DYNAMODB_TABLE_NAME",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:<account-id>:secret:vidp/dynamodb-table-name"
         }
       ],
       "logConfiguration": {
@@ -793,7 +817,7 @@ Content-Type: video/mp4
 
 ```html
 <video controls width="800">
-  <source src="http://localhost:8000/api/stream/65f1234567890abcdef12345" type="video/mp4">
+  <source src="https://vidp-video-storage.s3.amazonaws.com/job_a1b2c3d4_final.mp4?..." type="video/mp4">
   Your browser does not support the video tag.
 </video>
 ```
@@ -905,35 +929,6 @@ head -n 10 subtitles.srt
 # Vérifier l'encodage
 file subtitles.srt
 ```
-
----
-
-### Problème : MongoDB non connecté
-
-**Erreur** : `Failed to connect to MongoDB`
-
-**Solutions** :
-1. Vérifier `MONGODB_URL` dans `.env`
-2. Tester la connexion :
-```bash
-mongosh "mongodb://localhost:27017/vidp_cloud_db"
-```
-3. Sur AWS, vérifier le security group (autoriser port 27017)
-
----
-
-### Problème : Vidéo non streamable
-
-**Erreur** : Vidéo se charge entièrement avant la lecture
-
-**Solution** : Vérifier que les métadonnées MP4 sont au début (moov atom) :
-
-```bash
-# Déplacer les métadonnées au début avec FFmpeg
-ffmpeg -i input.mp4 -movflags faststart -codec copy output.mp4
-```
-
-Dans le code, ajoutez `-movflags faststart` aux paramètres FFmpeg.
 
 ---
 
@@ -1068,6 +1063,7 @@ aws logs tail /ecs/vidp-aggregation --follow
 ### Version 2.0.0 (2026-01-14)
 - ✅ Refactoring complet de l'architecture
 - ✅ Support AWS S3 pour le stockage
+- ✅ Support AWS DynamoDB pour les métadonnées
 - ✅ Streaming HTTP avec Range support
 - ✅ Amélioration de la gestion d'erreurs
 - ✅ Logs structurés vers stdout/stderr

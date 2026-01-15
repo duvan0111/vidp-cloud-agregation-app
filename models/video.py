@@ -1,20 +1,15 @@
 # app_agregation/models/video.py
 
 """
-MongoDB models for video metadata storage.
-Updated for Pydantic v2 and Python 3.12 compatibility.
+Pydantic models for video metadata storage.
+Updated for DynamoDB and Pydantic v2 compatibility.
 """
 
 from datetime import datetime
-from typing import Optional, Annotated
+from typing import Optional
 from enum import Enum
-from pydantic import BaseModel, Field, BeforeValidator, ConfigDict
-from bson import ObjectId
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
-# --- Custom Type for Pydantic v2 ---
-# This helper ensures that MongoDB ObjectIds are converted to strings 
-# before Pydantic tries to validate them.
-PyObjectId = Annotated[str, BeforeValidator(str)]
 
 class VideoStatus(str, Enum):
     """Video processing status enumeration."""
@@ -23,27 +18,29 @@ class VideoStatus(str, Enum):
     SAVED = "saved"
     FAILED = "failed"
 
+
 class VideoMetadata(BaseModel):
     """
-    Video metadata model for MongoDB storage.
+    Video metadata model for DynamoDB storage.
     
     Attributes:
-        id: Unique identifier (mapped from MongoDB '_id').
+        id: Unique identifier (UUID string).
         source_video_id: ID from the main vidp-fastapi-service (for cross-database reference).
         filename: Original name of the uploaded file.
-        file_path: Internal storage path.
-        link: Publicly accessible URL.
+        file_path: Storage path (S3 key or local path).
+        s3_key: S3 object key for the video file.
+        link: Publicly accessible URL (presigned URL or direct link).
         status: Current processing status.
         created_at: Timestamp of creation.
     """
-    # Map MongoDB's '_id' to Python's 'id'
-    id: Optional[PyObjectId] = Field(alias="_id", default=None)
+    id: Optional[str] = Field(default=None, description="Unique video ID (UUID)")
     
     # Reference to the original video in vidp-fastapi-service database
     source_video_id: Optional[str] = Field(None, description="Video ID from the main service (vidp-fastapi-service)")
     
     filename: str = Field(..., description="Original filename of the video")
-    file_path: str = Field(..., description="Relative path to video file")
+    file_path: str = Field(..., description="Storage path (S3 key or local path)")
+    s3_key: Optional[str] = Field(None, description="S3 object key for the video")
     link: str = Field(..., description="Full URL to access/stream the video")
     status: VideoStatus = Field(default=VideoStatus.PENDING, description="Processing status")
     
@@ -51,7 +48,6 @@ class VideoMetadata(BaseModel):
     duration: Optional[float] = Field(None, description="Video duration in seconds")
     resolution: Optional[str] = Field(None, description="Video resolution (e.g., 1920x1080)")
     
-    # Use datetime.now() because utcnow() is deprecated in Python 3.12
     created_at: datetime = Field(default_factory=datetime.now, description="Creation timestamp")
     updated_at: datetime = Field(default_factory=datetime.now, description="Last update timestamp")
     
@@ -59,15 +55,15 @@ class VideoMetadata(BaseModel):
 
     # Pydantic v2 Configuration
     model_config = ConfigDict(
-        populate_by_name=True,       # Allows using 'id' or '_id'
-        arbitrary_types_allowed=True, # Allows ObjectId to pass through if needed
+        populate_by_name=True,
         json_schema_extra={
             "example": {
-                "id": "65a1234567890abcdef12345",
-                "source_video_id": "550e8400-e29b-41d4-a716-446655440000",
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "source_video_id": "550e8400-e29b-41d4-a716-446655440001",
                 "filename": "sample_video.mp4",
-                "file_path": "video_storage/job_abc123_final.mp4",
-                "link": "http://localhost:8000/video_storage/job_abc123_final.mp4",
+                "file_path": "videos/job_abc123_final.mp4",
+                "s3_key": "job_abc123_final.mp4",
+                "link": "https://bucket.s3.amazonaws.com/videos/job_abc123_final.mp4",
                 "status": "saved",
                 "file_size": 15728640,
                 "duration": 120.5,
@@ -75,6 +71,15 @@ class VideoMetadata(BaseModel):
             }
         }
     )
+    
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def parse_datetime(cls, v):
+        """Parse datetime from ISO format string if needed."""
+        if isinstance(v, str):
+            return datetime.fromisoformat(v)
+        return v
+
 
 class VideoCreateRequest(BaseModel):
     """
@@ -84,9 +89,11 @@ class VideoCreateRequest(BaseModel):
     filename: str
     file_path: str
     link: str
+    s3_key: Optional[str] = None
     status: VideoStatus = VideoStatus.PENDING
     file_size: Optional[int] = None
-    source_video_id: Optional[str] = None  # ID from vidp-fastapi-service
+    source_video_id: Optional[str] = None
+
 
 class VideoUpdateRequest(BaseModel):
     """
@@ -98,3 +105,5 @@ class VideoUpdateRequest(BaseModel):
     file_size: Optional[int] = None
     duration: Optional[float] = None
     resolution: Optional[str] = None
+    link: Optional[str] = None
+    s3_key: Optional[str] = None
