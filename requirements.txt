@@ -1,14 +1,32 @@
+# Video Aggregation Service - Python Dependencies
+# This service uses FFmpeg directly (system package) for video processing
+
+# FastAPI Framework
 fastapi==0.123.8
 uvicorn[standard]==0.38.0
+
+# Data Validation
 pydantic==2.12.5
 pydantic-settings==2.7.1
-moviepy==2.2.1
+
+# HTTP Client
 httpx==0.28.1
+
+# File Upload & Processing
 python-multipart==0.0.20
-python-dotenv==1.2.1
 python-magic==0.4.27
+
+# Configuration
+python-dotenv==1.2.1
+
+# Security
 pyOpenSSL==25.3.0
 
 # AWS SDK
 boto3>=1.34.0
 aioboto3>=12.0.0
+
+# Note: FFmpeg is required but must be installed as a system package
+# Ubuntu/Debian: sudo apt-get install -y ffmpeg
+# macOS: brew install ffmpeg
+# Windows: Download from https://ffmpeg.org/download.html
