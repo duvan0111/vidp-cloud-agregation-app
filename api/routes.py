@@ -1,13 +1,14 @@
 # app_aggregation/api/routes.py
 """
 API route definitions for video processing endpoints.
-Uses Amazon S3 for storage and DynamoDB for metadata.
+UPDATED: Now accepts detected_language and animals_detected from vidp-fastapi-service
 """
 
 import logging
 from pathlib import Path
 from typing import Optional
 import uuid
+import json
 
 from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException, status, Request
 from fastapi.responses import StreamingResponse, RedirectResponse
@@ -26,7 +27,7 @@ router = APIRouter(prefix="/api", tags=["Video Processing"])
 
 @router.post(
     "/process-video/",
-    summary="Process video with SRT file upload",
+    summary="Process video with SRT file upload and metadata",
     response_description="Returns video metadata and streaming URL",
     status_code=status.HTTP_200_OK
 )
@@ -36,21 +37,43 @@ async def process_video(
     srt_file: UploadFile = File(..., description="SRT subtitle file to burn into the video"),
     resolution: str = Form(default="360p", description="Target video resolution"),
     crf_value: int = Form(default=23, ge=0, le=51, description="Video quality (0-51, lower is better)"),
-    source_video_id: Optional[str] = Form(default=None, description="Video ID from the main service (vidp-fastapi-service)")
+    source_video_id: Optional[str] = Form(default=None, description="Video ID from the main service (vidp-fastapi-service)"),
+    original_filename: Optional[str] = Form(default=None, description="Original filename uploaded by user"),
+    detected_language: Optional[str] = Form(default=None, description="Language detected by language detection service (ISO code)"),
+    animals_detected: Optional[str] = Form(default=None, description="Animals detected by YOLO service (JSON string)")
 ) -> dict:
     """
     Process video with provided SRT subtitles, burn them in, compress, and store to S3.
+    
+    NEW: Also receives and stores original_filename, detected_language and animals_detected metadata.
     
     Steps:
     1. Save uploaded video and SRT file locally (temp)
     2. Burn subtitles into video using FFmpeg
     3. Upload final video to S3
-    4. Save metadata to DynamoDB
+    4. Save metadata to DynamoDB (including original filename, language and animals)
     5. Return streaming URL (presigned S3 URL)
     """
     # Generate a unique Job ID
     job_id = f"job_{uuid.uuid4().hex[:8]}"
     logger.info(f"[{job_id}] Starting video processing for: {video.filename}")
+    
+    # Use original_filename if provided, otherwise use uploaded filename
+    final_original_filename = original_filename if original_filename else video.filename
+    logger.info(f"[{job_id}] Original filename: {final_original_filename}")
+    
+    # Parse animals_detected if provided
+    animals_dict = None
+    if animals_detected:
+        try:
+            animals_dict = json.loads(animals_detected)
+            logger.info(f"[{job_id}] Animals detected: {animals_dict}")
+        except json.JSONDecodeError as e:
+            logger.warning(f"[{job_id}] Failed to parse animals_detected JSON: {e}")
+    
+    # Log detected language
+    if detected_language:
+        logger.info(f"[{job_id}] Detected language: {detected_language}")
     
     # Define file paths (local temp)
     original_video_path = settings.TEMP_DIR / f"{job_id}_original.mp4"
@@ -107,14 +130,13 @@ async def process_video(
             logger.info(f"[{job_id}] SRT file written, size on disk: {srt_path.stat().st_size} bytes")
 
         # Step 3: Create initial DynamoDB entry
-        # Generate presigned URL placeholder (will be updated after upload)
         streaming_url = f"{settings.API_URL}/api/stream/{final_filename}"
         
         if source_video_id:
             logger.info(f"[{job_id}] Linking to source video ID: {source_video_id}")
         
         video_create = VideoCreateRequest(
-            filename=video.filename,
+            filename=final_original_filename,  # Use the original filename from user
             file_path=f"s3://{settings.S3_BUCKET_NAME}/{settings.S3_PREFIX}{s3_key}",
             s3_key=s3_key,
             link=streaming_url,
@@ -151,15 +173,25 @@ async def process_video(
         # Step 7: Generate presigned URL for streaming
         presigned_url = await S3Service.get_presigned_url(s3_key)
         
-        # Step 8: Update DynamoDB with success status
-        update_data = VideoUpdateRequest(
-            status=VideoStatus.SAVED,
-            file_size=video_info.get("size"),
-            duration=video_info.get("duration"),
-            resolution=video_info.get("resolution"),
-            link=presigned_url,
-            s3_key=s3_key
-        )
+        # Step 8: Update DynamoDB with success status + language + animals
+        update_data_dict = {
+            "status": VideoStatus.SAVED,
+            "file_size": video_info.get("size"),
+            "duration": video_info.get("duration"),
+            "resolution": video_info.get("resolution"),
+            "link": presigned_url,
+            "s3_key": s3_key
+        }
+        
+        # Add detected_language if provided
+        if detected_language:
+            update_data_dict["detected_language"] = detected_language
+        
+        # Add animals_detected if provided
+        if animals_dict:
+            update_data_dict["animals_detected"] = animals_dict
+        
+        update_data = VideoUpdateRequest(**update_data_dict)
         
         await DynamoDBService.update_video(video_id, update_data)
         
@@ -177,12 +209,14 @@ async def process_video(
             "streaming_url": presigned_url,
             "s3_uri": s3_uri,
             "metadata": {
-                "original_filename": video.filename,
+                "original_filename": final_original_filename,  # Return the original filename
                 "final_filename": final_filename,
                 "s3_key": s3_key,
                 "resolution": video_info.get("resolution"),
                 "duration": video_info.get("duration"),
-                "file_size": video_info.get("size")
+                "file_size": video_info.get("size"),
+                "detected_language": detected_language,
+                "animals_detected": animals_dict
             }
         }
     
@@ -270,26 +304,9 @@ async def stream_video(filename: str, request: Request):
     )
 
 
-@router.get(
-    "/video_storage/{filename}",
-    summary="Stream video (legacy endpoint - redirects to S3)",
-    response_class=RedirectResponse,
-    responses={
-        302: {"description": "Redirect to S3 stream endpoint"},
-        404: {"description": "Video not found"}
-    }
-)
-async def stream_video_legacy(filename: str, request: Request):
-    """
-    Legacy endpoint for backward compatibility.
-    Redirects to the new S3 streaming endpoint.
-    """
-    return RedirectResponse(url=f"/api/stream/{filename}", status_code=302)
-
-
 @router.get("/videos/{video_id}")
 async def get_video_metadata(video_id: str) -> dict:
-    """Get video metadata by ID."""
+    """Get video metadata by ID (including detected_language and animals_detected)."""
     video = await DynamoDBService.get_video(video_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -308,6 +325,7 @@ async def get_video_metadata(video_id: str) -> dict:
 async def get_video_by_source_id(source_video_id: str) -> dict:
     """
     Retrieve aggregated video metadata by source video ID from vidp-fastapi-service.
+    Includes detected_language and animals_detected if available.
     """
     video = await DynamoDBService.get_video_by_source_id(source_video_id)
     if not video:
@@ -366,31 +384,6 @@ async def delete_video(video_id: str, background_tasks: BackgroundTasks) -> dict
         raise HTTPException(status_code=404, detail="Video metadata not found")
     
     return {"status": "success", "message": f"Video {video_id} deleted successfully"}
-
-
-@router.get("/presigned-url/{video_id}")
-async def get_presigned_url(video_id: str, expiration: int = 3600) -> dict:
-    """
-    Get a fresh presigned URL for a video.
-    
-    Args:
-        video_id: The video ID
-        expiration: URL expiration time in seconds (default 1 hour)
-    """
-    video = await DynamoDBService.get_video(video_id)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
-    
-    if not video.s3_key:
-        raise HTTPException(status_code=400, detail="Video has no S3 key")
-    
-    presigned_url = await S3Service.get_presigned_url(video.s3_key, expiration=expiration)
-    
-    return {
-        "video_id": video_id,
-        "presigned_url": presigned_url,
-        "expires_in": expiration
-    }
 
 
 @router.get("/health")

@@ -6,7 +6,7 @@ Updated for DynamoDB and Pydantic v2 compatibility.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 from enum import Enum
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
@@ -23,6 +23,10 @@ class VideoMetadata(BaseModel):
     """
     Video metadata model for DynamoDB storage.
     
+    NEW FIELDS:
+    - detected_language: Language detected by language detection service
+    - animals_detected: Dictionary of animals detected by YOLO service
+    
     Attributes:
         videoId: Primary key in DynamoDB (UUID string).
         id: Alias for videoId for backward compatibility.
@@ -32,6 +36,8 @@ class VideoMetadata(BaseModel):
         s3_key: S3 object key for the video file.
         link: Publicly accessible URL (presigned URL or direct link).
         status: Current processing status.
+        detected_language: Language code detected (e.g., 'fr', 'en', 'es').
+        animals_detected: Dictionary of detected animals with counts (e.g., {'dog': 5, 'cat': 2}).
         created_at: Timestamp of creation.
     """
     videoId: Optional[str] = Field(default=None, description="Unique video ID (UUID) - Primary Key")
@@ -49,6 +55,16 @@ class VideoMetadata(BaseModel):
     file_size: Optional[int] = Field(None, description="File size in bytes")
     duration: Optional[float] = Field(None, description="Video duration in seconds")
     resolution: Optional[str] = Field(None, description="Video resolution (e.g., 1920x1080)")
+    
+    # NEW FIELDS FOR METADATA
+    detected_language: Optional[str] = Field(
+        None, 
+        description="Language detected by language detection service (ISO code: fr, en, es, etc.)"
+    )
+    animals_detected: Optional[Dict[str, int]] = Field(
+        None,
+        description="Animals detected by YOLO service with their counts (e.g., {'dog': 5, 'cat': 2})"
+    )
     
     created_at: datetime = Field(default_factory=datetime.now, description="Creation timestamp")
     updated_at: datetime = Field(default_factory=datetime.now, description="Last update timestamp")
@@ -70,7 +86,13 @@ class VideoMetadata(BaseModel):
                 "status": "saved",
                 "file_size": 15728640,
                 "duration": 120.5,
-                "resolution": "1920x1080"
+                "resolution": "1920x1080",
+                "detected_language": "fr",
+                "animals_detected": {
+                    "dog": 5,
+                    "cat": 2,
+                    "bird": 1
+                }
             }
         }
     )
@@ -103,6 +125,8 @@ class VideoCreateRequest(BaseModel):
     status: VideoStatus = VideoStatus.PENDING
     file_size: Optional[int] = None
     source_video_id: Optional[str] = None
+    detected_language: Optional[str] = None
+    animals_detected: Optional[Dict[str, int]] = None
 
 
 class VideoUpdateRequest(BaseModel):
@@ -117,3 +141,5 @@ class VideoUpdateRequest(BaseModel):
     resolution: Optional[str] = None
     link: Optional[str] = None
     s3_key: Optional[str] = None
+    detected_language: Optional[str] = None
+    animals_detected: Optional[Dict[str, int]] = None
